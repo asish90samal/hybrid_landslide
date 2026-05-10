@@ -1,3 +1,8 @@
+# ==============================================================
+# HYBRID LANDSLIDE DETECTION SYSTEM
+# FINAL CLIENT VERSION
+# ==============================================================
+
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -9,10 +14,18 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from datetime import datetime
 
+# ==============================================================
+# PAGE CONFIG
+# ==============================================================
+
 st.set_page_config(
-    page_title="Hybrid Landslide Detection",
+    page_title="Hybrid Landslide Detection System",
     layout="wide"
 )
+
+# ==============================================================
+# TRAIN ML MODEL
+# ==============================================================
 
 @st.cache_resource
 def train_ml_model():
@@ -26,19 +39,44 @@ def train_ml_model():
     rainfall = np.random.uniform(10, 350, data_size)
     soil_moisture = np.random.uniform(0.1, 1.0, data_size)
     ndvi = np.random.uniform(-0.2, 0.9, data_size)
+
     lithology = np.random.randint(1, 6, data_size)
+
     seismic_activity = np.random.uniform(0, 7, data_size)
 
+    distance_to_road = np.random.uniform(0, 5, data_size)
+
+    terrain_roughness = np.random.uniform(0, 1000, data_size)
+
+    groundwater_level = np.random.uniform(0, 50, data_size)
+
+    precipitation_intensity = np.random.uniform(0, 100, data_size)
+
+    slope_aspect = np.random.uniform(0, 360, data_size)
+
+    soil_type = np.random.randint(1, 5, data_size)
+
+    # ----------------------------------------------------------
+    # SYNTHETIC RISK
+    # ----------------------------------------------------------
+
     risk_score = (
-        (slope / 60) * 0.25 +
-        (rainfall / 350) * 0.25 +
-        soil_moisture * 0.20 +
-        (1 - ndvi) * 0.10 +
+        (slope / 60) * 0.20 +
+        (rainfall / 350) * 0.20 +
+        soil_moisture * 0.15 +
+        (1 - ndvi) * 0.08 +
         (lithology / 5) * 0.10 +
-        (seismic_activity / 7) * 0.10
+        (seismic_activity / 7) * 0.10 +
+        (terrain_roughness / 1000) * 0.07 +
+        (groundwater_level / 50) * 0.05 +
+        (precipitation_intensity / 100) * 0.05
     )
 
-    landslide = (risk_score > 0.50).astype(int)
+    landslide = (risk_score > 0.45).astype(int)
+
+    # ----------------------------------------------------------
+    # DATAFRAME
+    # ----------------------------------------------------------
 
     df = pd.DataFrame({
         "slope": slope,
@@ -48,10 +86,17 @@ def train_ml_model():
         "ndvi": ndvi,
         "lithology": lithology,
         "seismic_activity": seismic_activity,
+        "distance_to_road": distance_to_road,
+        "terrain_roughness": terrain_roughness,
+        "groundwater_level": groundwater_level,
+        "precipitation_intensity": precipitation_intensity,
+        "slope_aspect": slope_aspect,
+        "soil_type": soil_type,
         "landslide": landslide
     })
 
     X = df.drop("landslide", axis=1)
+
     y = df["landslide"]
 
     X_train, X_test, y_train, y_test = train_test_split(
@@ -62,8 +107,8 @@ def train_ml_model():
     )
 
     model = RandomForestClassifier(
-        n_estimators=200,
-        max_depth=12,
+        n_estimators=250,
+        max_depth=14,
         random_state=42
     )
 
@@ -72,32 +117,70 @@ def train_ml_model():
     return model
 
 
+# ==============================================================
+# VIDEO ANALYZER
+# ==============================================================
+
 class CombinedVideoAnalyzer:
 
     def __init__(self):
+
         self.prev_gray = None
 
     def process_frame(self, frame):
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
+        # ------------------------------------------------------
+        # MOTION DETECTION
+        # ------------------------------------------------------
+
         if self.prev_gray is None:
+
             movement = 0.0
+
         else:
+
             diff = cv2.absdiff(self.prev_gray, gray)
-            movement = np.clip(diff.mean() * 0.8, 0, 100)
+
+            movement = np.clip(
+                diff.mean() * 4.5,
+                0,
+                100
+            )
 
         self.prev_gray = gray
 
+        # ------------------------------------------------------
+        # DEBRIS DETECTION
+        # ------------------------------------------------------
+
         edges = cv2.Canny(gray, 100, 200)
 
-        debris_score = edges.mean() / 255.0
+        debris_score = min(
+            (edges.mean() / 255.0) * 3.5,
+            1.0
+        )
 
-        panic_score = movement / 100.0
+        # ------------------------------------------------------
+        # PANIC SCORE
+        # ------------------------------------------------------
 
-        video_risk = (
-            panic_score * 0.55 +
-            debris_score * 0.45
+        panic_score = min(
+            movement / 100.0,
+            1.0
+        )
+
+        # ------------------------------------------------------
+        # FINAL VIDEO RISK
+        # ------------------------------------------------------
+
+        video_risk = min(
+            (
+                panic_score * 0.65 +
+                debris_score * 0.55
+            ) * 1.4,
+            1.0
         )
 
         return {
@@ -107,9 +190,14 @@ class CombinedVideoAnalyzer:
         }
 
 
-def analyze_video(uploaded_video, max_frames=150):
+# ==============================================================
+# VIDEO ANALYSIS
+# ==============================================================
+
+def analyze_video(uploaded_video, max_frames=200):
 
     if uploaded_video is None:
+
         return None
 
     try:
@@ -124,19 +212,22 @@ def analyze_video(uploaded_video, max_frames=150):
         tfile.write(uploaded_video.read())
 
         tfile.flush()
+
         tfile.close()
 
         cap = cv2.VideoCapture(tfile.name)
 
         if not cap.isOpened():
-            st.error("Could not open uploaded video")
+
+            st.error("Could not open video")
+
             return None
 
         analyzer = CombinedVideoAnalyzer()
 
         panic_scores = []
         debris_scores = []
-        total_risks = []
+        video_risks = []
 
         frame_count = 0
 
@@ -155,18 +246,20 @@ def analyze_video(uploaded_video, max_frames=150):
             metrics = analyzer.process_frame(frame)
 
             panic_scores.append(metrics["panic_score"])
+
             debris_scores.append(metrics["debris_score"])
-            total_risks.append(metrics["video_risk"])
+
+            video_risks.append(metrics["video_risk"])
 
         cap.release()
 
-        if len(total_risks) == 0:
+        if len(video_risks) == 0:
             return None
 
         return {
             "panic_score": float(np.mean(panic_scores)),
             "debris_score": float(np.mean(debris_scores)),
-            "video_risk": float(np.mean(total_risks)),
+            "video_risk": float(np.mean(video_risks)),
             "frames_analyzed": frame_count
         }
 
@@ -185,9 +278,14 @@ def analyze_video(uploaded_video, max_frames=150):
             pass
 
 
+# ==============================================================
+# HYBRID SYSTEM
+# ==============================================================
+
 class HybridLandslideSystem:
 
     def __init__(self, model):
+
         self.model = model
 
     def predict(self, environmental_data, video_data=None):
@@ -201,27 +299,39 @@ class HybridLandslideSystem:
         if video_data is not None:
 
             combined_risk = (
-                ml_risk * 0.75 +
-                video_data["video_risk"] * 0.25
+                ml_risk * 0.80 +
+                video_data["video_risk"] * 0.20
             )
 
+        # ------------------------------------------------------
+        # ALERT LEVELS
+        # ------------------------------------------------------
+
         if combined_risk > 0.75:
+
             alert = "🔴 CRITICAL ALERT"
+
             recommendation = "EVACUATE IMMEDIATELY"
 
-        elif combined_risk > 0.60:
+        elif combined_risk > 0.65:
+
             alert = "🟠 HIGH ALERT"
+
             recommendation = "PREPARE FOR EVACUATION"
 
-        elif combined_risk > 0.40:
+        elif combined_risk > 0.35:
+
             alert = "🟡 MODERATE ALERT"
+
             recommendation = "CONTINUE MONITORING"
 
         else:
+
             alert = "🟢 LOW RISK"
+
             recommendation = "SAFE"
 
-        result = {
+        return {
             "ml_risk": float(ml_risk),
             "combined_risk": float(combined_risk),
             "alert": alert,
@@ -229,8 +339,10 @@ class HybridLandslideSystem:
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
 
-        return result
 
+# ==============================================================
+# MAIN APP
+# ==============================================================
 
 def main():
 
@@ -238,19 +350,27 @@ def main():
 
     st.markdown("""
 ### Features
-- Environmental ML Prediction
-- Cattle Panic Movement Detection
-- Small Debris Movement Detection
-- Hybrid Risk Assessment
+- Environmental ML Risk Prediction
+- Cattle Panic Detection
+- Debris Movement Detection
+- Hybrid Risk Fusion
 - Single Video Analysis
 - Synthetic Dataset Fallback
 """)
+
+    # ----------------------------------------------------------
+    # LOAD MODEL
+    # ----------------------------------------------------------
 
     with st.spinner("Loading ML model..."):
 
         model = train_ml_model()
 
     system = HybridLandslideSystem(model)
+
+    # ----------------------------------------------------------
+    # SIDEBAR
+    # ----------------------------------------------------------
 
     st.sidebar.header("Environmental Parameters")
 
@@ -272,14 +392,14 @@ def main():
         "Rainfall",
         10.0,
         350.0,
-        150.0
+        180.0
     )
 
     soil_moisture = st.sidebar.slider(
         "Soil Moisture",
         0.1,
         1.0,
-        0.5
+        0.6
     )
 
     ndvi = st.sidebar.slider(
@@ -301,6 +421,57 @@ def main():
         3.0
     )
 
+    distance_to_road = st.sidebar.slider(
+        "Distance To Road",
+        0.0,
+        5.0,
+        1.5
+    )
+
+    terrain_roughness = st.sidebar.slider(
+        "Terrain Roughness",
+        0.0,
+        1000.0,
+        500.0
+    )
+
+    groundwater_level = st.sidebar.slider(
+        "Groundwater Level",
+        0.0,
+        50.0,
+        20.0
+    )
+
+    precipitation_intensity = st.sidebar.slider(
+        "Precipitation Intensity",
+        0.0,
+        100.0,
+        50.0
+    )
+
+    slope_aspect = st.sidebar.slider(
+        "Slope Aspect",
+        0.0,
+        360.0,
+        180.0
+    )
+
+    soil_type = st.sidebar.selectbox(
+        "Soil Type",
+        ["Clay", "Sandy", "Loamy", "Rocky"]
+    )
+
+    # ----------------------------------------------------------
+    # CONVERT SOIL TYPE
+    # ----------------------------------------------------------
+
+    soil_map = {
+        "Clay": 1,
+        "Sandy": 2,
+        "Loamy": 3,
+        "Rocky": 4
+    }
+
     environmental_data = {
         "slope": slope,
         "elevation": elevation,
@@ -308,8 +479,18 @@ def main():
         "soil_moisture": soil_moisture,
         "ndvi": ndvi,
         "lithology": lithology,
-        "seismic_activity": seismic_activity
+        "seismic_activity": seismic_activity,
+        "distance_to_road": distance_to_road,
+        "terrain_roughness": terrain_roughness,
+        "groundwater_level": groundwater_level,
+        "precipitation_intensity": precipitation_intensity,
+        "slope_aspect": slope_aspect,
+        "soil_type": soil_map[soil_type]
     }
+
+    # ----------------------------------------------------------
+    # VIDEO INPUT
+    # ----------------------------------------------------------
 
     st.subheader("📹 Upload Video")
 
@@ -319,7 +500,12 @@ def main():
     )
 
     if uploaded_video is not None:
+
         st.video(uploaded_video)
+
+    # ----------------------------------------------------------
+    # RUN ANALYSIS
+    # ----------------------------------------------------------
 
     if st.button("🚀 Run Analysis"):
 
@@ -333,6 +519,10 @@ def main():
             )
 
         st.success("Analysis Complete")
+
+        # ------------------------------------------------------
+        # METRICS
+        # ------------------------------------------------------
 
         col1, col2 = st.columns(2)
 
@@ -368,12 +558,16 @@ def main():
             )
 
         st.markdown(
-            f"### Recommendation: {result['recommendation']}"
+            f"## Recommendation: {result['recommendation']}"
         )
 
         st.markdown(
             f"### Timestamp: {result['timestamp']}"
         )
+
+        # ------------------------------------------------------
+        # VIDEO SUMMARY
+        # ------------------------------------------------------
 
         if video_data is not None:
 
@@ -384,9 +578,14 @@ def main():
         else:
 
             st.info(
-                "No video uploaded. Using only environmental ML prediction."
+                "No video uploaded. Using only ML prediction."
             )
 
 
+# ==============================================================
+# RUN
+# ==============================================================
+
 if __name__ == "__main__":
+
     main()
